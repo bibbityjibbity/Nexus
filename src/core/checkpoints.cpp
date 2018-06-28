@@ -17,9 +17,8 @@ namespace Core
 {
 	/** Hardened Checkpoints. **/
 	std::map<unsigned int, uint1024> mapCheckpoints;
-    
-    /** Checkpoints automatically lock the chain 3 days ago, and also act as references for any chain you have. **/
-	unsigned int CHECKPOINT_TIMESPAN = 60, MAX_CHECKPOINTS_SEARCH = 24 * 3;
+	unsigned int CHECKPOINT_TIMESPAN = 30, MAX_CHECKPOINTS_SEARCH = 1;
+
 	
 	
 	/** Check Checkpoint Timespan. **/

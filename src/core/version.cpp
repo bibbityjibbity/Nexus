@@ -7,13 +7,13 @@
 *******************************************************************************************/
 
 #include <string>
-#include "core/version.h"
+#include "version.h"
 
 /** Used for Visual Reference Only **/
 const std::string CLIENT_NAME("Nexus");
 
 /* The database type used (Berklee DB or Lower Level Database) */
-const std::string CLIENT_VERSION("0.2.4.5");
+const std::string CLIENT_VERSION("0.2.4.5 [RC4]");
 
 #if defined USE_LLD
     const std::string CLIENT_DATABASE("[LLD]");

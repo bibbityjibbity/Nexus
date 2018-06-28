@@ -1,5 +1,5 @@
 #include "index.h"
-#include "core.h"
+#include "../core/core.h"
 
 /** Lower Level Database Name Space. **/
 namespace LLD
@@ -224,10 +224,7 @@ namespace LLD
                             if(!ExtractAddress(block.vtx[nTx].vout[nOut].scriptPubKey, cAddress))
                                 continue;
                                 
-                            if(Core::mapAddressTransactions.count(cAddress.GetHash256()))
-                                Core::mapAddressTransactions[cAddress.GetHash256()] += block.vtx[nTx].vout[nOut].nValue;
-                            else
-                                Core::mapAddressTransactions[cAddress.GetHash256()] = block.vtx[nTx].vout[nOut].nValue;
+                            Core::mapAddressTransactions[cAddress.GetHash256()] += block.vtx[nTx].vout[nOut].nValue;
                             
                             if(!Core::mapRichList.count(cAddress.GetHash256()))
                                 Core::mapRichList[cAddress.GetHash256()] = { std::make_pair(block.vtx[nTx].IsCoinBase(), block.vtx[nTx].GetHash()) };
@@ -255,11 +252,7 @@ namespace LLD
                                 if(!ExtractAddress(tx.vout[txin.prevout.n].scriptPubKey, cAddress))
                                     continue;
                                 
-                                if(Core::mapAddressTransactions.count(cAddress.GetHash256()) < tx.vout[txin.prevout.n].nValue)
-                                    Core::mapAddressTransactions[cAddress.GetHash256()] = 0;
-                                else
-                                    Core::mapAddressTransactions[cAddress.GetHash256()] -= tx.vout[txin.prevout.n].nValue;
-                                    
+                                Core::mapAddressTransactions[cAddress.GetHash256()] = std::max((uint64)0, Core::mapAddressTransactions[cAddress.GetHash256()] - tx.vout[txin.prevout.n].nValue);
                                 
                                 if(!Core::mapRichList.count(cAddress.GetHash256()))
                                     Core::mapRichList[cAddress.GetHash256()] = { std::make_pair(block.vtx[nTx].IsCoinBase(), tx.GetHash()) };
@@ -297,7 +290,7 @@ namespace LLD
             hashBlock = diskindex.hashNext;
         }
         if(fRequestShutdown)
-            return true;
+            return false;
         
         Core::nBestHeight = Core::pindexBest->nHeight;
         Core::nBestChainTrust = Core::pindexBest->nChainTrust;
@@ -622,7 +615,6 @@ namespace LLD
                         }
                     }
                 }
-                
             }
             else
             {

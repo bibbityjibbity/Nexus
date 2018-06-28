@@ -147,6 +147,7 @@ namespace Core
 	
 	/** The "Block Chain" or index of the chain linking each block to its previous block. **/
 	extern std::map<uint1024, CBlockIndex*> mapBlockIndex;
+    extern std::map<uint1024, uint1024>   mapInvalidBlocks;
 	
 	extern std::map<uint1024, uint1024> mapProofOfStake;
 	extern std::map<uint512, CDataStream*> mapOrphanTransactions;
@@ -279,12 +280,12 @@ namespace Core
 	
 	/** PRIME.CPP **/
 	unsigned int SetBits(double nDiff);
-	double GetPrimeDifficulty(CBigNum prime, int checks);
-	unsigned int GetPrimeBits(CBigNum prime);
-	unsigned int GetFractionalDifficulty(CBigNum composite);
-	bool PrimeCheck(CBigNum test, int checks);
-	CBigNum FermatTest(CBigNum n, CBigNum a);
-	bool Miller_Rabin(CBigNum n, int checks);
+	double GetPrimeDifficulty(const CBigNum& prime, int checks);
+	unsigned int GetPrimeBits(const CBigNum& prime);
+	unsigned int GetFractionalDifficulty(const CBigNum& composite);
+	bool PrimeCheck(const CBigNum& test, int checks);
+	CBigNum FermatTest(const CBigNum& n, const CBigNum& a);
+	bool Miller_Rabin(const CBigNum& n, int checks);
 
 
 	/** TRANSACTION.CPP **/
@@ -670,7 +671,6 @@ namespace Core
                 if(hashThisBlock != 0){
                     if((*prev).first == hashThisBlock){
                         fFound = true;
-                    
                         continue;
                     }
                     
@@ -697,7 +697,18 @@ namespace Core
 			return strprintf("Hash = %s, Key = %s, Genesis = %s, Tx = %s, Time = %u, Age = %u", GetHash().ToString().c_str(), cKey.ToString().c_str(), hashGenesisBlock.ToString().c_str(), hashGenesisTx.ToString().c_str(), nGenesisTime, Age(GetUnifiedTimestamp()));
 		}
 		
-		void Print() const
+		uint576 GetKey()
+        {
+            if(IsNull())
+                return 0;
+            
+            uint576 cKey;
+            cKey.SetBytes(vchPubKey);
+            
+            return cKey;
+        }
+		
+		void Print()
 		{
 			printf("CTrustKey(%s)\n", ToString().c_str());
 		}
@@ -1477,6 +1488,9 @@ namespace Core
 			}
 			return hash;
 		}
+		
+		
+        bool Reindex(CBlockIndex* pindex);
 
 
 		bool WriteToDisk(unsigned int& nFileRet, unsigned int& nBlockPosRet)
@@ -1965,7 +1979,7 @@ namespace Core
 				if (mi != mapBlockIndex.end())
 				{
 					CBlockIndex* pindex = (*mi).second;
-					if (pindex->IsInMainChain())
+					if (pindex && pindex->IsInMainChain())
 						return nDistance;
 				}
 				nDistance += nStep;
@@ -1984,7 +1998,7 @@ namespace Core
 				if (mi != mapBlockIndex.end())
 				{
 					CBlockIndex* pindex = (*mi).second;
-					if (pindex->IsInMainChain())
+					if (pindex && pindex->IsInMainChain())
 						return pindex;
 				}
 			}
@@ -2000,7 +2014,7 @@ namespace Core
 				if (mi != mapBlockIndex.end())
 				{
 					CBlockIndex* pindex = (*mi).second;
-					if (pindex->IsInMainChain())
+					if (pindex && pindex->IsInMainChain())
 						return hash;
 				}
 			}
@@ -2012,6 +2026,7 @@ namespace Core
 			CBlockIndex* pindex = GetBlockIndex();
 			if (!pindex)
 				return 0;
+            
 			return pindex->nHeight;
 		}
 	};
