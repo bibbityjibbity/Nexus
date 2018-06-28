@@ -47,9 +47,6 @@ namespace LLD
 	{
 	public:
 	
-		/** The hash for the Transaction to be saved under. **/
-		uint64 TransactionID;
-		
 		/** Only let one operation happen on the transaction at one time. **/
 		boost::mutex TX_MUTEX;
 		
@@ -61,6 +58,9 @@ namespace LLD
 		
 		/** Vector to hold the keys of transactions to be erased. **/
 		std::map< std::vector<unsigned char>, unsigned int > mapEraseData;
+        
+        /** Flag for Transaction. **/
+        bool fCommit = false;
 		
 		/** Basic Constructor. **/
 		SectorTransaction(){ }

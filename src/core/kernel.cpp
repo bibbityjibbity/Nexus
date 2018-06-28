@@ -18,7 +18,7 @@
 
 using namespace std;
 
-/** Locate the Add Coinstake Inputs Method Here for access. **/
+/* Locate the Add Coinstake Inputs Method Here for access. */
 namespace Wallet
 {
 
@@ -28,19 +28,22 @@ namespace Wallet
         /* Add Each Input to Transaction. */
         vector<const CWalletTx*> vInputs;
         vector<const CWalletTx*> vCoins;
-        
+
+        int64 nBalance = GetBalance();
+        int64 nReserveBalance = GetArg("-reservebalance", 0);
+
         txNew.vout[0].nValue = 0;
         
         {
-        LOCK(cs_wallet);
-        
-        vCoins.reserve(mapWallet.size());
-        for (map<uint512, CWalletTx>::const_iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
-            vCoins.push_back(&(*it).second);
+            LOCK(cs_wallet);
+            
+            vCoins.reserve(mapWallet.size());
+            for (auto it = mapWallet.begin(); it != mapWallet.end(); ++it)
+                vCoins.push_back(&(*it).second);
         }
         
         random_shuffle(vCoins.begin(), vCoins.end(), GetRandInt);
-        BOOST_FOREACH(const CWalletTx* pcoin, vCoins)
+        for(auto pcoin : vCoins)
         {
             if (!pcoin->IsFinal() || pcoin->GetDepthInMainChain() < 60)
                 continue;
@@ -56,8 +59,8 @@ namespace Wallet
                 if (pcoin->nTime > txNew.nTime)
                     continue;
 
-                //if(txNew.vout[0].nValue > (nBalance - nReserveBalance))
-                //	break;
+                if(txNew.vout[0].nValue > (nBalance - nReserveBalance))
+                	break;
                     
                 /* Stop adding Inputs if has reached Maximum Transaction Size. */
                 unsigned int nBytes = ::GetSerializeSize(txNew, SER_NETWORK, PROTOCOL_VERSION);
@@ -67,28 +70,28 @@ namespace Wallet
                 txNew.vin.push_back(Core::CTxIn(pcoin->GetHash(), i));
                 vInputs.push_back(pcoin);
                     
-                /** Add the value to the first Output for Coinstake. **/
+                /* Add the value to the first Output for Coinstake. */
                 txNew.vout[0].nValue += pcoin->vout[i].nValue;
             }
         }
-        
+
         if(txNew.vin.size() == 1)
-            return false;
+            return error("AddCoinstakeInputs() : Invalid Coinstake only one input for Coinstake");
             
-        /** Set the Interest for the Coinstake Transaction. **/
+        /* Set the Interest for the Coinstake Transaction. */
         int64 nInterest;
         LLD::CIndexDB indexdb("rw");
+
         if(!txNew.GetCoinstakeInterest(indexdb, nInterest))
             return error("AddCoinstakeInputs() : Failed to Get Interest");
         
         txNew.vout[0].nValue += nInterest;
             
-        /** Sign Each Input to Transaction. **/
+        /* Sign Each Input to Transaction. */
         for(int nIndex = 0; nIndex < vInputs.size(); nIndex++)
         {
             if (!SignSignature(*this, *vInputs[nIndex], txNew, nIndex + 1))
                 return error("AddCoinstakeInputs() : Unable to sign Coinstake Transaction Input.");
-
         }
         
         return true;
@@ -99,13 +102,15 @@ namespace Wallet
 namespace Core
 {
     
-    /** Check the Coinstake Transaction is within the rules applied for Proof of Stake. **/
+    /* Check the Coinstake Transaction is within the rules applied for Proof of Stake. */
     bool CBlock::VerifyStake() const
     {
             
         /* Check Average age is above Limit if No Trust Key Seen. */
-        vector< std::vector<unsigned char> > vKeys;
+        std::vector< std::vector<unsigned char> > vKeys;
         Wallet::TransactionType keyType;
+
+        /* Wallet::Solver comes back as false if scriptPubKey could not be completely satisified. */
         if (!Wallet::Solver(vtx[0].vout[0].scriptPubKey, keyType, vKeys))
             return error("CBlock::VerifyStake() : Failed To Solve Trust Key Script.");
             
@@ -120,12 +125,13 @@ namespace Core
         /* Determine Trust Age if the Trust Key Exists. */
         uint64 nCoinAge = 0, nTrustAge = 0, nBlockAge = 0;
         double nTrustWeight = 0.0, nBlockWeight = 0.0;
+
+        /* Ensure that the Trust Key is in the Trust Pool */
         if(!cTrustPool.Exists(cKey))
             return error("CBlock::VerifyStake() : No Trust Key in Trust Pool (Missing Accept)");
         
         if(vtx[0].IsTrust())
         {
-            
             /* Check the genesis and trust timestamps. */
             if(cTrustPool.Find(cKey).nGenesisTime > mapBlockIndex[hashPrevBlock]->GetBlockTime())
                 return error("CBlock::VerifyStake() : Genesis Time cannot be after Trust Time.");
@@ -133,36 +139,37 @@ namespace Core
             nTrustAge = cTrustPool.Find(cKey).Age(mapBlockIndex[hashPrevBlock]->GetBlockTime());
             nBlockAge = cTrustPool.Find(cKey).BlockAge(GetHash(), hashPrevBlock);
             
-            /** Trust Weight Reaches Maximum at 30 day Limit. **/
+            /* Trust Weight Reaches Maximum at 28 day Limit. */
             nTrustWeight = min(17.5, (((16.5 * log(((2.0 * nTrustAge) / (60 * 60 * 24 * 28)) + 1.0)) / log(3))) + 1.0);
             
-            /** Block Weight Reaches Maximum At Trust Key Expiration. **/
+            /* Block Weight Reaches Maximum At Trust Key Expiration. */
             nBlockWeight = min(20.0, (((19.0 * log(((2.0 * nBlockAge) / (TRUST_KEY_EXPIRE)) + 1.0)) / log(3))) + 1.0);
         }
         else
         {
                 
-            /** Calculate the Average Coinstake Age. **/
+            /* Calculate the Average Coinstake Age. */
             LLD::CIndexDB indexdb("r");
             if(!vtx[0].GetCoinstakeAge(indexdb, nCoinAge))
                 return error("CBlock::VerifyStake() : Failed to Get Coinstake Age.");
             
-            /** Trust Weight For Genesis Transaction Reaches Maximum at 90 day Limit. **/
+            /* Trust Weight For Genesis Transaction Reaches Maximum at 84 day Limit. */
             nTrustWeight = min(17.5, (((16.5 * log(((2.0 * nCoinAge) / (60 * 60 * 24 * 28 * 3)) + 1.0)) / log(3))) + 1.0);
         }
         
-        /** G] Check the nNonce Efficiency Proportion Requirements. **/
+        /* Check the nNonce Efficiency Proportion Requirements. */
         double nThreshold = ((nTime - vtx[0].nTime) * 100.0) / nNonce;
         double nRequired  = ((50.0 - nTrustWeight - nBlockWeight) * MAX_STAKE_WEIGHT) / std::min((int64)MAX_STAKE_WEIGHT, vtx[0].vout[0].nValue);
         if(nThreshold < nRequired)
             return error("CBlock::VerifyStake() : Coinstake / nNonce threshold too low %f Required %f. Energy efficiency limits Reached", nThreshold, nRequired);
             
             
-        /** H] Check the Block Hash with Weighted Hash to Target. **/
+        /* Expand CBigNum to uint1024 */
         CBigNum bnTarget;
         bnTarget.SetCompact(nBits);
         uint1024 hashTarget = bnTarget.getuint1024();
-        
+
+        /* Check the Block Hash with Weighted Hash to Target. */
         if(GetHash() > hashTarget)
             return error("CBlock::VerifyStake() : Proof of Stake Hash not meeting Target.");
             
@@ -179,35 +186,36 @@ namespace Core
     }
     
     
-    /** Calculate the Age of the current Coinstake. Age is determined by average time from previous transactions. **/
+    /* Calculate the Age of the current Coinstake. Age is determined by average time from previous transactions. */
     bool CTransaction::GetCoinstakeAge(LLD::CIndexDB& indexdb, uint64& nAge) const
     {
-        /** Output figure to show the amount of coins being staked at their interest rates. **/
+        /* Output figure to show the amount of coins being staked at their interest rates. */
         nAge = 0;
         
-        /** Check that the transaction is Coinstake. **/
+        /* Check that the transaction is Coinstake. */
         if(!IsCoinStake())
-            return false;
+            return error("GetCoinstakeAge() : Doesn't pass IsCoinStake checks");
         
-        /** Check the coin age of each Input. **/
-        for(int nIndex = 1; nIndex < vin.size(); nIndex++)
+        /* Check the coin age of each Input. */
+        // for(int nIndex = 1; nIndex < vin.size(); nIndex++)
+        for(const auto txIn : vin)
         {
             CTransaction txPrev;
             CTxIndex txindex;
             
-            /** Ignore Outputs that are not in the Main Chain. **/
-            if (!txPrev.ReadFromDisk(indexdb, vin[nIndex].prevout, txindex))
+            /* Ignore Outputs that are not in the Main Chain. */
+            if (!txPrev.ReadFromDisk(indexdb, txIn.prevout, txindex))
                 return error("GetCoinstakeAge() : Invalid Previous Transaction");
 
-            /** Read the Previous Transaction's Block from Disk. **/
+            /* Read the Previous Transaction's Block from Disk. */
             CBlock block;
             if (!block.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false))
                 return error("GetCoinstakeAge() : Failed To Read Block from Disk");
 
-            /** Calculate the Age and Value of given output. **/
+            /* Calculate the Age and Value of given output. */
             int64 nCoinAge = (nTime - block.GetBlockTime());
             
-            /** Compound the Total Figures. **/
+            /* Compound the Total Figures. */
             nAge += nCoinAge;
         }
         
@@ -217,43 +225,45 @@ namespace Core
     }
     
     
-    /** Obtains the proper compounded interest from given Coin Stake Transaction. **/
+    /* Obtains the proper compounded interest from given Coin Stake Transaction. */
     bool CTransaction::GetCoinstakeInterest(LLD::CIndexDB& indexdb, int64& nInterest) const
     {
-        /** Check that the transaction is Coinstake. **/
+        /* Check that the transaction is Coinstake. */
         if(!IsCoinStake())
             return error("CTransaction::GetCoinstakeInterest() : Not Coinstake Transaction");
             
-        /** Extract the Key from the Script Signature. **/
+        /* Extract the Key from the Script Signature. */
         vector< std::vector<unsigned char> > vKeys;
         Wallet::TransactionType keyType;
+
         if (!Wallet::Solver(vout[0].scriptPubKey, keyType, vKeys))
             return error("CTransaction::GetCoinstakeInterest() : Failed To Solve Trust Key Script.");
 
-        /** Ensure the Key is Public Key. No Pay Hash or Script Hash for Trust Keys. **/
+        /* Ensure the Key is Public Key. No Pay Hash or Script Hash for Trust Keys. */
         if (keyType != Wallet::TX_PUBKEY)
             return error("CTransaction::GetCoinstakeInterest() : Trust Key must be of Public Key Type Created from Keypool.");
         
-        /** Set the Public Key Integer Key from Bytes. **/
+        /* Set the Public Key Integer Key from Bytes. */
         uint576 cKey;
         cKey.SetBytes(vKeys[0]);
             
-        /** Output figure to show the amount of coins being staked at their interest rates. **/
+        /* Output figure to show the amount of coins being staked at their interest rates. */
         int64 nTotalCoins = 0, nAverageAge = 0;
         nInterest = 0;
         
-        /** Calculate the Variable Interest Rate for Given Coin Age Input. [0.5% Minimum - 3% Maximum].
-            Logarithmic Variable Interest Equation = 0.03 ln((9t / 31449600) + 1) / ln(10) **/
+        /* Calculate the Variable Interest Rate for Given Coin Age Input. [0.5% Minimum - 3% Maximum].
+            Logarithmic Variable Interest Equation = 0.03 ln((9t / 31449600) + 1) / ln(10) */
         double nInterestRate = cTrustPool.InterestRate(cKey, nTime);
             
-        /** Check the coin age of each Input. **/
-        for(int nIndex = 1; nIndex < vin.size(); nIndex++)
+        /* Check the coin age of each Input. */
+        // for(int nIndex = 1; nIndex < vin.size(); nIndex++)
+        for(const auto txIn : vin)
         {
             CTransaction txPrev;
             CTxIndex txindex;
             
             /** Ignore Outputs that are not in the Main Chain. **/
-            if (!txPrev.ReadFromDisk(indexdb, vin[nIndex].prevout, txindex))
+            if (!txPrev.ReadFromDisk(indexdb, txIn.prevout, txindex))
                 return error("CTransaction::GetCoinstakeInterest() : Invalid Previous Transaction");
 
             /** Read the Previous Transaction's Block from Disk. **/
@@ -263,13 +273,13 @@ namespace Core
                 
             /** Calculate the Age and Value of given output. **/
             int64 nCoinAge = (nTime - block.GetBlockTime());
-            int64 nValue = txPrev.vout[vin[nIndex].prevout.n].nValue;
+            int64 nValue = txPrev.vout[txIn.prevout.n].nValue;
             
             /** Compound the Total Figures. **/
             nTotalCoins += nValue;
             nAverageAge += nCoinAge;
         
-            /** Interest is 2% of Year's Interest of Value of Coins. Coin Age is in Seconds. **/
+            /** Interest is 3 Percent of Year's Interest of Value of Coins. Coin Age is in Seconds. **/
             nInterest += ((nValue * nInterestRate * nCoinAge) / (60 * 60 * 24 * 28 * 13));
             
         }
@@ -280,13 +290,13 @@ namespace Core
     }
     
     
-    /** TODO: Trust Key Reactivation
+    /* TODO: Trust Key Reactivation
     * 
     * Function to Check the Current Trust Key to see if it is expired.
-    * If Key is Empty, check Trust Pool for Possible Key owned by this wallet. **/
+    * If Key is Empty, check Trust Pool for Possible Key owned by this wallet. */
     bool CTrustPool::HasTrustKey(unsigned int nTime)
     {
-        /** First Check if the Current Key is Expired. **/
+        /* First Check if the Current Key is Expired. */
         if(!vchTrustKey.empty())
         {
             uint576 cKey;
@@ -315,7 +325,7 @@ namespace Core
         }
         else
             dInterestRate = 0.005;
-        
+
         /** Check each Trust Key to See if we Own it if there is no Key. **/
         CTrustKey keyBestTrust;
         for(std::map<uint576, CTrustKey>::iterator i = mapTrustKeys.begin(); i != mapTrustKeys.end() && vchTrustKey.empty(); ++i)
@@ -323,7 +333,7 @@ namespace Core
                 
             /* Check the Wallet and Trust Keys in Trust Pool to see if we own any keys. */
             Wallet::NexusAddress address;
-            address.SetPubKey(i->second.vchPubKey);
+            address.SetPubKey(i.second.vchPubKey);
             if(pwalletMain->HaveKey(address))
             {
                 if(i->second.Expired(0, pindexBest->GetBlockHash()))
@@ -367,8 +377,10 @@ namespace Core
         /* Extract the Key from the Script Signature. */
         vector< std::vector<unsigned char> > vKeys;
         Wallet::TransactionType keyType;
+
+        /* Wallet::Solver because this is lower level if it finds an error it returns true by default */
         if (!Wallet::Solver(cBlock.vtx[0].vout[0].scriptPubKey, keyType, vKeys))
-            return error("CTrustPool::IsValid() : Failed To Solve Trust Key Script.");
+            return true;
 
         /* Ensure the Key is Public Key. No Pay Hash or Script Hash for Trust Keys. */
         if (keyType != Wallet::TX_PUBKEY)
@@ -391,10 +403,10 @@ namespace Core
         {
             pindex[i] = GetLastChannelIndex(i == 0 ? mapBlockIndex[cBlock.hashPrevBlock] : pindex[i - 1]->pprev, 0);
             if(!pindex[i])
-                return error("CTrustPool::IsValid() : Can't Find last Channel Index");
+                return true;
             
             if(!pblock[i].ReadFromDisk(pindex[i]->nFile, pindex[i]->nBlockPos, true))
-                return error("CTrustPool::IsValid() : Can't Read Block from Disk");
+                return true;
                 
             if(i > 0)
                 nAverageTime += (pblock[i - 1].nTime - pblock[i].nTime);
@@ -415,7 +427,8 @@ namespace Core
                 return error("\x1b[31m SOFTBAN: \u001b[37;1m 5 Genesis Average block time < 20 seconds %u \x1b[0m", nAverageTime );
         
             /* Check the coin age of each Input. */
-            for(int nIndex = 1; nIndex < cBlock.vtx[0].vin.size(); nIndex++)
+            // for(int nIndex = 1; nIndex < cBlock.vtx[0].vin.size(); nIndex++)
+            for(const auto txIn : cBlock.vtx[0].vin)
             {
                 CTransaction txPrev;
                 CTxIndex txindex;
@@ -452,29 +465,27 @@ namespace Core
             }
         }
         
-        /** Handle Adding Trust Transactions. **/
+        /* Handle Adding Trust Transactions. */
         else if(cBlock.vtx[0].IsTrust())
         {
-            
             /* RULE: Average Block time of last six blocks not to go below 30 seconds */
             if(nAverageTime < 20 && (cBlock.nTime - pblock[0].nTime) < 30)
                 return error("\x1b[31m SOFTBAN: \u001b[37;1m Trust Average block time < 30 seconds %u \x1b[0m", nAverageTime);
                 
-                
             /* Check the coin age of each Input. */
-            for(int nIndex = 1; nIndex < cBlock.vtx[0].vin.size(); nIndex++)
+            for(auto txIn : cBlock.vtx[0].vin)
             {
                 CTransaction txPrev;
                 CTxIndex txindex;
                 
                 /* Ignore Outputs that are not in the Main Chain. */
-                if (!txPrev.ReadFromDisk(indexdb, cBlock.vtx[0].vin[nIndex].prevout, txindex))
-                    return error("GetCoinstakeAge() : Invalid Previous Transaction");
+                if (!txPrev.ReadFromDisk(indexdb, txIn.prevout, txindex))
+                    return true;
 
                 /* Read the Previous Transaction's Block from Disk. */
                 CBlock block;
                 if (!block.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false))
-                    return error("GetCoinstakeAge() : Failed To Read Block from Disk");
+                    return true;
                 
                 /* RULE: Inputs need to have at least 100 confirmations */
                 if(cBlock.nHeight - block.nHeight < 100)
@@ -493,7 +504,7 @@ namespace Core
                     pblock[1].vtx[0].GetValueOut() < 1000 * COIN)
                     return error("\x1b[31m SOFTBAN: \u001b[37;1m More than 2 Consecutive Trust < 1000 NXS \x1b[0m");
                     
-                /* RULE: Trust with < 1000 made within 12 hours of last */
+                /* RULE: Trust with < 1000 made within 8 hours of last */
                 if(nBlockAge < 8 * 60 * 60)
                     return error("\x1b[31m SOFTBAN: \u001b[37;1m Less than 8 hours since last Trust made with < 1000 NXS \x1b[0m");
             }
@@ -504,16 +515,14 @@ namespace Core
     
     
     
-    /** Check a Block's Coinstake Transaction to see if it fits Trust Key Protocol. 
+    /* Check a Block's Coinstake Transaction to see if it fits Trust Key Protocol. 
     
         If Key doesn't exist Transaction must meet Genesis Protocol Requirements.
         If Key does exist it Must Meet Trust Protocol Requirements. 
         
-    **/
+    */
     bool CTrustPool::Check(CBlock cBlock)
     {
-        /* Lock Accepting Trust Keys to Mutex. */
-        LOCK(cs);
         
         /* Ensure the Block is for Proof of Stake Only. */
         if(!cBlock.IsProofOfStake())
@@ -538,10 +547,12 @@ namespace Core
         /* Extract the Key from the Script Signature. */
         vector< std::vector<unsigned char> > vKeys;
         Wallet::TransactionType keyType;
+
+        
         if (!Wallet::Solver(cBlock.vtx[0].vout[0].scriptPubKey, keyType, vKeys))
             return error("CTrustPool::check() : Failed To Solve Trust Key Script.");
 
-        /** Ensure the Key is Public Key. No Pay Hash or Script Hash for Trust Keys. **/
+        /* Ensure the Key is Public Key. No Pay Hash or Script Hash for Trust Keys. */
         if (keyType != Wallet::TX_PUBKEY)
             return error("CTrustPool::check() : Trust Key must be of Public Key Type Created from Keypool.");
         
@@ -551,9 +562,8 @@ namespace Core
     
     bool CTrustPool::Connect(CBlock cBlock, bool fInit)
     {
-        /* Lock Accepting Trust Keys to Mutex. */
         LOCK(cs);
-            
+
         /* Extract the Key from the Script Signature. */
         vector< std::vector<unsigned char> > vKeys;
         Wallet::TransactionType keyType;
@@ -571,7 +581,6 @@ namespace Core
         /* Handle Genesis Transaction Rules. Genesis is checked after Trust Key Established. */
         if(cBlock.vtx[0].IsGenesis())
         {
-            
             std::vector< std::pair<uint1024, bool> >::iterator itFalse = std::find(mapTrustKeys[cKey].hashPrevBlocks.begin(), mapTrustKeys[cKey].hashPrevBlocks.end(), std::make_pair(cBlock.GetHash(), false) );
             
             if(itFalse != mapTrustKeys[cKey].hashPrevBlocks.end())
@@ -583,7 +592,15 @@ namespace Core
                 
                 return Connect(cBlock, fInit);
             }
-            
+
+            /* Check for Null Keys and erase */
+            if(mapTrustKeys[cKey].IsNull())
+                return error("CTrustPool::Connect() : Genesis Key is NULL");
+        
+            /* Check the Genesis Transaction. */
+            if(!mapTrustKeys[cKey].CheckGenesis(cBlock))
+                return error("CTrustPool::Connect() : Invalid Genesis Transaction.");
+
             /* Create the Trust Key from Genesis Transaction Block. */
             CTrustKey cTrustKey(vKeys[0], cBlock.GetHash(), cBlock.vtx[0].GetHash(), cBlock.nTime);
             if(!cTrustKey.CheckGenesis(cBlock))
@@ -601,6 +618,10 @@ namespace Core
             /* No Trust Transaction without a Genesis. */
             if(!mapTrustKeys.count(cKey))
                 return error("CTrustPool::Connect() : Cannot Create Trust Transaction without Genesis.");
+            
+            /* Check for Null Keys and erase. */
+            if(mapTrustKeys[cKey].IsNull())
+                return error("CTrustPool::Connect() : Trust key is NULL");
             
             /* Check that the Trust Key and Current Block match. */
             if(mapTrustKeys[cKey].vchPubKey != vKeys[0])
@@ -652,46 +673,42 @@ namespace Core
             }
         }
         
-        /* Dump the Trust Key to Console if not Initializing. */
-        if(!fInit && GetArg("-verbose", 0) >= 2)
-            mapTrustKeys[cKey].Print();
-        
-        /* Only Debug when Not Initializing. */
-        if(!fInit && GetArg("-verbose", 0) >= 1)
-            printf("CTrustPool::ACCEPTED %s\n", cKey.ToString().substr(0, 20).c_str());
-        
+        /* Verify the Stake Kernel. */
+        if(!fInit && !cBlock.VerifyStake())
+            return error("CTrustPool::Connect() : Invalid Proof of Stake");
+
         return true;
     }
         
         
-    /** Remove a Block from Trust Key. **/
+    /* Remove a Block from Trust Key. */
     bool CTrustPool::Disconnect(CBlock cBlock, bool fInit)
     {
-        /** Lock Accepting Trust Keys to Mutex. **/
         LOCK(cs);
         
-        /** Extract the Key from the Script Signature. **/
+        /* Extract the Key from the Script Signature. */
         vector< std::vector<unsigned char> > vKeys;
         Wallet::TransactionType keyType;
+
         if (!Wallet::Solver(cBlock.vtx[0].vout[0].scriptPubKey, keyType, vKeys))
             return error("CTrustPool::Disconnect() : Failed To Solve Trust Key Script.");
 
-        /** Ensure the Key is Public Key. No Pay Hash or Script Hash for Trust Keys. **/
+        /* Ensure the Key is Public Key. No Pay Hash or Script Hash for Trust Keys. */
         if (keyType != Wallet::TX_PUBKEY)
             return error("CTrustPool::Disconnect() : Trust Key must be of Public Key Type Created from Keypool.");
             
-        /** Set the Public Key Integer Key from Bytes. **/
+        /* Set the Public Key Integer Key from Bytes. */
         uint576 cKey;
         cKey.SetBytes(vKeys[0]);
             
-        /** Handle Genesis Transaction Rules. Genesis is checked after Trust Key Established. **/
+        /* Handle Genesis Transaction Rules. Genesis is checked after Trust Key Established. */
         if(cBlock.vtx[0].IsGenesis())
         {
-            /** Only Remove Trust Key from Map if Key Exists. **/
+            /* Only Remove Trust Key from Map if Key Exists. */
             if(!mapTrustKeys.count(cKey))
                 return error("CTrustPool::Disconnect() : Key %s Doesn't Exist in Trust Pool\n", cKey.ToString().substr(0, 20).c_str());
                 
-            /** Remove the Trust Key from the Trust Pool. **/
+            /* Remove the Trust Key from the Trust Pool. */
             mapTrustKeys.erase(cKey);
             
             if(GetArg("-verbose", 0) >= 2)
@@ -700,19 +717,13 @@ namespace Core
             return true;
         }
         
-        /** Handle Adding Trust Transactions. **/
+        /* Handle Adding Trust Transactions. */
         else if(cBlock.vtx[0].IsTrust())
         {
             /** Get the Index of the Block in the Trust Key. **/
             std::vector< std::pair<uint1024, bool> >::iterator it = std::find(mapTrustKeys[cKey].hashPrevBlocks.begin(), mapTrustKeys[cKey].hashPrevBlocks.end(), std::make_pair(cBlock.GetHash(), true) );
             
-            if(it == mapTrustKeys[cKey].hashPrevBlocks.end())
-            {
-                std::vector< std::pair<uint1024, bool> >::iterator itFalse = std::find(mapTrustKeys[cKey].hashPrevBlocks.begin(), mapTrustKeys[cKey].hashPrevBlocks.end(), std::make_pair(cBlock.GetHash(), false) );
-                if(itFalse == mapTrustKeys[cKey].hashPrevBlocks.end())
-                    return error("CTrustPool::Disconnect() Block %s not found in Trust Key", cBlock.GetHash().ToString().substr(0, 20).c_str());
-            }
-            else
+            if(it != mapTrustKeys[cKey].hashPrevBlocks.end())
                 (*it).second = false;
                     
             printf("CTrustPool::Disconnect() : Removed Block %s From Trust Key\n", cBlock.GetHash().ToString().substr(0, 20).c_str());
@@ -724,22 +735,26 @@ namespace Core
     }
     
     
-    /** Accept a Block's Coinstake into the Trust Pool Assigning it to Specified Trust Key.  
-        This Method shouldn't be called before CTrustPool::Check **/
+    /* Accept a Block's Coinstake into the Trust Pool Assigning it to Specified Trust Key.  
+        This Method shouldn't be called before CTrustPool::Check */
     bool CTrustPool::Accept(CBlock cBlock, bool fInit)
     {
         /* Lock Accepting Trust Keys to Mutex. */
         LOCK(cs);
+        
+        /* Check the Trust key for validity. */
+        if(!fInit && !Check(cBlock))
+            return error("CTrustPool::Accept() : Trust Key Failed Checks");
             
         /* Extract the Key from the Script Signature. */
         vector< std::vector<unsigned char> > vKeys;
         Wallet::TransactionType keyType;
         if (!Wallet::Solver(cBlock.vtx[0].vout[0].scriptPubKey, keyType, vKeys))
-            return error("CTrustPool::accept() : Failed To Solve Trust Key Script.");
+            return error("CTrustPool::Accept() : Failed To Solve Trust Key Script.");
 
         /* Ensure the Key is Public Key. No Pay Hash or Script Hash for Trust Keys. */
         if (keyType != Wallet::TX_PUBKEY)
-            return error("CTrustPool::accept() : Trust Key must be of Public Key Type Created from Keypool.");
+            return error("CTrustPool::Accept() : Trust Key must be of Public Key Type Created from Keypool.");
             
         /* Set the Public Key Integer Key from Bytes. */
         uint576 cKey;
@@ -757,48 +772,33 @@ namespace Core
             /* Add the key to the trust pool. */
             mapTrustKeys[cKey] = cTrustKey;
             
-            /* Dump the Trust Key To Console if not Initializing. */
-            if(!fInit && GetArg("-verbose", 0) >= 2)
-                cTrustKey.Print();
-            
-            /* Only Debug when Not Initializing. */
-            if(GetArg("-verbose", 0) >= 1 && !fInit) {
-                printf("CTrustPool::accept() : New Genesis Coinstake Transaction From Block %u\n", cBlock.nHeight);
-                printf("CTrustPool::ACCEPTED %s\n", cKey.ToString().substr(0, 20).c_str());
-            }
-            
             return true;
         }
         
-        /** Handle Adding Trust Transactions. **/
+        /* Handle Adding Trust Transactions. */
         else if(cBlock.vtx[0].IsTrust())
         {
-            /** Add the new block to the Trust Key. **/
+            /* Add the new block to the Trust Key. */
             mapTrustKeys[cKey].hashPrevBlocks.push_back(std::make_pair(cBlock.GetHash(), false));
-            
-            /** Only Debug when Not Initializing. **/
-            if(!fInit && GetArg("-verbose", 0) >= 1) {
-                printf("CTrustPool::ACCEPTED %s\n", cKey.ToString().substr(0, 20).c_str());
-            }
             
             return true;
         }
         
-        return error("CTrustPool::accept() : Missing Trust or Genesis Transaction in Block.");
+        return error("CTrustPool::Accept() : Missing Trust or Genesis Transaction in Block.");
     }
     
     
-    /** Interest is Determined By Logarithmic Equation from Genesis Key. **/
+    /* Interest is Determined By Logarithmic Equation from Genesis Key. */
     double CTrustPool::InterestRate(uint576 cKey, unsigned int nTime) const
     {
-        /** Genesis and First Trust Block awarded 0.5% interest. **/
-        if(!Exists(cKey) || IsGenesis(cKey)) //TODO detect genesis flag with block hash
+        /* Genesis and First Trust Block awarded 0.5% interest. */
+        if(!Exists(cKey) || IsGenesis(cKey)) //TODO: detect genesis flag with block hash
             return 0.005;
             
         return min(0.03, (((0.025 * log(((9.0 * (nTime - Find(cKey).nGenesisTime)) / (60 * 60 * 24 * 28 * 13)) + 1.0)) / log(10))) + 0.005);
     }
     
-    /** Break the Chain Age in Minutes into Days, Hours, and Minutes. **/
+    /* Break the Chain Age in Minutes into Days, Hours, and Minutes. */
     void GetTimes(unsigned int nAge, unsigned int& nDays, unsigned int& nHours, unsigned int& nMinutes)
     {
         nDays = nAge / 1440;
@@ -807,8 +807,8 @@ namespace Core
     }
     
     
-    /** Should not be called until key is established in block chain. 
-        Block must have been received and be part of the main chain. **/
+    /* Should not be called until key is established in block chain. 
+        Block must have been received and be part of the main chain. */
     bool CTrustKey::CheckGenesis(CBlock cBlock) const
     {
         /* Invalid if Null. */
@@ -818,7 +818,7 @@ namespace Core
         /* Trust Keys must be created from only Proof of Stake Blocks. */
         if(!cBlock.IsProofOfStake())
             return error("CTrustKey::CheckGenesis() : Genesis Key Invalid for non Proof of Stake blocks.");
-            
+
         /* Trust Key Timestamp must be the same as Genesis Key Block Timestamp. */
         if(nGenesisTime != cBlock.nTime)
             return error("CTrustKey::CheckGenesis() : Time Mismatch for Trust key to Genesis Trust Block");
@@ -826,10 +826,11 @@ namespace Core
         /* Genesis Key Transaction must match Trust Key Genesis Hash. */
         if(cBlock.vtx[0].GetHash() != hashGenesisTx)
             return error("CTrustKey::CheckGenesis() : Genesis Key Hash Mismatch to Genesis Transaction Hash");
-            
-        /* Extract the Key from the Script Signature. **/
+
+        /* Extract the Key from the Script Signature. */
         vector< std::vector<unsigned char> > vKeys;
         Wallet::TransactionType keyType;
+
         if (!Wallet::Solver(cBlock.vtx[0].vout[0].scriptPubKey, keyType, vKeys))
             return error("CTrustKey::IsInvalid() : Failed To Solve Trust Key Script.");
 
@@ -843,7 +844,6 @@ namespace Core
         
         return true;
     }
-    
 
     /* Key is Expired if Time between Network Previous Best Block and
      Trust Best Previous is Greater than Expiration Time. */
@@ -856,7 +856,8 @@ namespace Core
     }
     
     
-    /** Key is Expired if it is Invalid or Time between Network Best Block and Best Previous is Greater than Expiration Time. **/
+    /* Key is Expired if it is Invalid or Time between Network Best Block and 
+        Best Previous is Greater than Expiration Time. */
     uint64 CTrustKey::Age(unsigned int nTime) const 
     { 
         if(nGenesisTime == 0)
@@ -883,20 +884,18 @@ namespace Core
         
         /* Find the block previous to pindexNew. */
         uint1024 hashBlockLast = Back(hashThisBlock);
-        if(!mapBlockIndex.count(hashBlockLast))
-            return 0; 
-        
-        /* Make sure there aren't timestamp overflows. */
+
+      /* Make sure there aren't timestamp overflows. */
         if(mapBlockIndex[hashBlockLast]->GetBlockTime() > mapBlockIndex[hashPrevBlock]->GetBlockTime())
             return BlockAge(hashBlockLast, hashPrevBlock); //recursively look back from last back if block times not satisfied
-        
+
         /* Block Age is Time to Previous Block's Time. */
         return (uint64)(mapBlockIndex[hashPrevBlock]->GetBlockTime() - mapBlockIndex[hashBlockLast]->GetBlockTime());
     }
     
     
     
-    /** Proof of Stake local CPU miner. Uses minimal resources. **/
+    /* Proof of Stake local CPU miner. Uses minimal resources. */
     void StakeMinter(void* parg)
     {
         printf("Stake Minter Started\n");
@@ -954,7 +953,7 @@ namespace Core
                 nTrustAge = cTrustPool.Find(cKey).Age(pindexBest->GetBlockTime());
                 nBlockAge = cTrustPool.Find(cKey).BlockAge(0, pindexBest->GetBlockHash());
                     
-                /* Trust Weight Reaches Maximum at 30 day Limit. */
+                /* Trust Weight Reaches Maximum at 28 day Limit. */
                 nTrustWeight = min(17.5, (((16.5 * log(((2.0 * nTrustAge) / (60 * 60 * 24 * 28)) + 1.0)) / log(3))) + 1.0);
                     
                 /* Block Weight Reaches Maximum At Trust Key Expiration. */
@@ -985,7 +984,7 @@ namespace Core
                 }
                     
                     
-                /** Trust Weight For Genesis Transaction Reaches Maximum at 90 day Limit. **/
+                /* Trust Weight For Genesis Transaction Reaches Maximum at 84 day Limit. */
                 nTrustWeight = min(17.5, (((16.5 * log(((2.0 * nCoinAge) / (60 * 60 * 24 * 28 * 3)) + 1.0)) / log(3))) + 1.0);
             }
             

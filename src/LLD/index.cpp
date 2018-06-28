@@ -44,7 +44,8 @@ namespace LLD
         assert(!Net::fClient);
         tx.SetNull();
         if (!ReadTxIndex(hash, txindex))
-            return false;
+            return error("CIndexDB::ReadDiskTx() : Failed to ReadTxIndex");
+        
         return (tx.ReadFromDisk(txindex.pos));
     }
 
@@ -441,8 +442,9 @@ namespace LLD
             if (!block.ReadFromDisk(pindexFork))
                 return error("LoadBlockIndex() : block.ReadFromDisk failed");
             
-            CIndexDB txdb;
-            block.SetBestChain(txdb, pindexFork);
+            TxnBegin();
+            block.SetBestChain(*this, pindexFork);
+            TxnCommit();
         }
 
         return true;
@@ -457,7 +459,8 @@ namespace LLD
 
 
         unsigned int fFlags = DB_SET_RANGE;
-        loop() {
+        while(!fRequestShutdown)
+        {
             // Read next record
             CDataStream ssKey(SER_DISK, DATABASE_VERSION);
             if (fFlags == DB_SET_RANGE)
@@ -802,8 +805,8 @@ namespace LLD
             Core::CBlock block;
             if (!block.ReadFromDisk(pindexFork))
                 return error("LoadBlockIndex() : block.ReadFromDisk failed");
-            CIndexDB txdb;
-            block.SetBestChain(txdb, pindexFork);
+            
+            block.SetBestChain(*this, pindexFork);
         }
 
         return true;

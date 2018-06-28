@@ -82,8 +82,12 @@ namespace LLD
 		}
 		~SectorDatabase()
         { 
-            if (pTransaction) 
+            if(pTransaction && !pTransaction->fCommit)
                 delete pTransaction;
+            else {
+                while(pTransaction)
+                    Sleep(100);
+            }
         }
 		
 		/** Initialize Sector Database. **/
@@ -189,16 +193,6 @@ namespace LLD
 			ssValue.reserve(value.GetSerializeSize(SER_LLD, DATABASE_VERSION));
 			ssValue << value;
 			std::vector<unsigned char> vData(ssValue.begin(), ssValue.end());
-
-			/** Commit to the Database. **/
-			if(pTransaction)
-			{
-				
-				std::vector<unsigned char> vOriginalData;
-				//Get(vKey, vOriginalData);
-				
-				return pTransaction->AddTransaction(vKey, vData, vOriginalData);
-			}
 			
 			return Put(vKey, vData);
 		}
@@ -227,13 +221,14 @@ namespace LLD
                 
                 return true;
             }
-			else if(SectorKeys->HasKey(vKey))
+			
+			if(SectorKeys->HasKey(vKey))
 			{
                 
 				/** Read the Sector Key from Keychain. **/
 				SectorKey cKey;
 				if(!SectorKeys->Get(vKey, cKey))
-					return false;
+					return error("Sector Get() : Cannot Find Key in Keychain");
 				
 				/** Open the Stream to Read the data from Sector on File. **/
 				std::fstream fStream(strprintf("%s%s%u.dat", strBaseLocation.c_str(), strBaseName.c_str(), cKey.nSectorFile).c_str(), std::ios::in | std::ios::binary);
@@ -269,6 +264,14 @@ namespace LLD
 			KeyDatabase* SectorKeys = GetKeychain(strKeychainRegistry);
 			if(!SectorKeys)
 				return error("Put() : Sector Keys not Registered for Name %s\n", strKeychainRegistry.c_str());
+            
+			if(pTransaction)
+			{
+				std::vector<unsigned char> vOriginalData;
+				//Get(vKey, vOriginalData);
+				
+				return pTransaction->AddTransaction(vKey, vData, vOriginalData);
+			}
 			
 			/** Write Header if First Update. **/
 			if(!SectorKeys->HasKey(vKey))
@@ -412,6 +415,9 @@ namespace LLD
 		bool TxnCommit()
 		{
 			MUTEX_LOCK(SECTOR_MUTEX);
+            
+            //Set the transaction to commit status
+            pTransaction->fCommit = true;
             
             //TODO: Commit Transaction to Journal Here before writing to Keychain
 			

@@ -161,7 +161,7 @@ namespace Core
         }
 
         // Nexus: clean up wallet after disconnecting coinstake
-        BOOST_FOREACH(CTransaction& tx, vtx)
+        for(auto tx : vtx)
             SyncWithWallets(tx, this, false, false);
 
         return true;
@@ -176,12 +176,12 @@ namespace Core
         // If such overwrites are allowed, coinbases and transactions depending upon those
         // can be duplicated to remove the ability to spend the first instance -- even after
         // being sent to another address.
-        BOOST_FOREACH(CTransaction& tx, vtx)
+        for(auto tx : vtx)
         {
             CTxIndex txindexOld;
             if (indexdb.ReadTxIndex(tx.GetHash(), txindexOld))
             {
-                BOOST_FOREACH(CDiskTxPos &pos, txindexOld.vSpent)
+                for(auto pos : txindexOld.vSpent)
                     if (pos.IsNull()){
                         
                         return error("ConnectBlock() : Transaction Disk Index is Null %s", tx.GetHash().ToString().c_str());
@@ -199,7 +199,7 @@ namespace Core
         int64 nValueOut = 0;
         unsigned int nSigOps = 0;
         unsigned int nIterator = 0;
-        BOOST_FOREACH(CTransaction& tx, vtx)
+        for(auto tx : vtx)
         {
             nSigOps += tx.GetLegacySigOpCount();
             if (nSigOps > MAX_BLOCK_SIGOPS)
@@ -259,7 +259,7 @@ namespace Core
         // Nexus: fees are not collected by miners as in bitcoin
         // Nexus: fees are destroyed to compensate the entire network
         if(GetArg("-verbose", 0) >= 1)
-            printf("ConnectBlock() : destroy=%s nFees=%" PRI64d "\n", FormatMoney(nFees).c_str(), nFees);
+            printf("ConnectBlock() : height=%u hash=%s destroy=%s nFees=%" PRI64d "\n", pindex->nHeight, pindex->GetBlockHash().ToString().substr(0, 20).c_str(), FormatMoney(nFees).c_str(), nFees);
 
         // Update block index on disk without changing it in memory.
         // The memory index structure will be changed after the db commits.
@@ -273,7 +273,7 @@ namespace Core
         }
 
         // Watch for transactions paying to me
-        BOOST_FOREACH(CTransaction& tx, vtx)
+        for(auto tx : vtx)
             SyncWithWallets(tx, this, true);
 
         return true;
@@ -299,6 +299,7 @@ namespace Core
         }
         else
         {
+
             if(!IsInitialBlockDownload() && IsProofOfStake() && GetBoolArg("-softban", true) && !cTrustPool.IsValid(*this))
             {
                 error("\x1b[31m SOFTBAN: Invalid nPoS %s\x1b[0m", hash.ToString().substr(0, 20).c_str());
@@ -335,58 +336,57 @@ namespace Core
             
             /* Debug output if there is a fork. */
             if(vDisconnect.size() > 0 && GetArg("-verbose", 0) >= 1)
-            {
-                printf("REORGANIZE: Disconnect %i blocks; %s..%s\n", vDisconnect.size(), pfork->GetBlockHash().ToString().substr(0,20).c_str(), pindexBest->GetBlockHash().ToString().substr(0,20).c_str());
-                printf("REORGANIZE: Connect %i blocks; %s..%s\n", vConnect.size(), pfork->GetBlockHash().ToString().substr(0,20).c_str(), pindexNew->GetBlockHash().ToString().substr(0,20).c_str());
-            }
+                printf("REORGANIZE::Disconnect %i blocks; %s..%s\n", vDisconnect.size(), pfork->GetBlockHash().ToString().substr(0,20).c_str(), pindexBest->GetBlockHash().ToString().substr(0,20).c_str());
             
+            if(vConnect.size() > 1 && GetArg("-verbose", 0) >= 1)
+                printf("Connect %i blocks; %s..%s\n", vConnect.size(), pfork->GetBlockHash().ToString().substr(0,20).c_str(), pindexNew->GetBlockHash().ToString().substr(0,20).c_str());
+
             /* Disconnect the Shorter Branch. */
             vector<CTransaction> vResurrect;
-            BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
+            for(auto pindex : vDisconnect)
             {
                 CBlock block;
                 if (!block.ReadFromDisk(pindex))
                     return error("CBlock::SetBestChain() : ReadFromDisk for disconnect failed");
+                
                 if (!block.DisconnectBlock(indexdb, pindex))
                     return error("CBlock::SetBestChain() : DisconnectBlock %s failed", pindex->GetBlockHash().ToString().substr(0,20).c_str());
                     
-                /** Remove Transactions from Current Trust Keys **/
+                /* Remove Transactions from Current Trust Keys */
                 if(block.IsProofOfStake() && !cTrustPool.Disconnect(block))
                     return error("CBlock::SetBestChain() : Disconnect Failed to Remove Trust Key at Block %s", pindex->GetBlockHash().ToString().substr(0,20).c_str());
                 
-                /** Resurrect Memory Pool Transactions. **/
-                BOOST_FOREACH(const CTransaction& tx, block.vtx)
+                /* Resurrect Memory Pool Transactions. */
+                for(auto tx : block.vtx)
                     if (!(tx.IsCoinBase() || tx.IsCoinStake()))
                         vResurrect.push_back(tx);
             }
 
 
-            
             /* Connect the Longer Branch. */
             vector<CTransaction> vDelete;
-            for (unsigned int i = 0; i < vConnect.size(); i++)
+            for(auto pindex : vConnect)
             {
-                CBlockIndex* pindex = vConnect[i];
                 CBlock block;
                 if (!block.ReadFromDisk(pindex))
                     return error("CBlock::SetBestChain() : ReadFromDisk for connect failed");
                 
                 if (!block.ConnectBlock(indexdb, pindex))
-                {
-                    indexdb.TxnAbort();
                     return error("CBlock::SetBestChain() : ConnectBlock %s Height %u failed", pindex->GetBlockHash().ToString().substr(0,20).c_str(), pindex->nHeight);
-                }
+                
+                if(block.IsProofOfStake() && !cTrustPool.Connect(block))
+                    return error("CBlock::SetBestChain() : Failed To Connect Trust Key Block.");
                 
                 /* Harden a pending checkpoint if this is the case. */
                 if(pindex->pprev && IsNewTimespan(pindex))
                     HardenCheckpoint(pindex);
-                
+  
                 /* Add Transaction to Current Trust Keys */
                 if(block.IsProofOfStake() && !cTrustPool.Connect(block))
                     return error("CBlock::SetBestChain() : Failed To Accept Trust Key Block.");
 
-                /* Delete Memory Pool Transactions contained already. **/
-                BOOST_FOREACH(const CTransaction& tx, block.vtx)
+                /* Delete Memory Pool Transactions contained already. */
+                for(auto tx : block.vtx)
                     if (!(tx.IsCoinBase() || tx.IsCoinStake()))
                         vDelete.push_back(tx);
             }
@@ -397,22 +397,22 @@ namespace Core
 
             
             /* Disconnect Shorter Branch in Memory. */
-            BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
+            for(auto pindex : vDisconnect)
                 if (pindex->pprev)
                     pindex->pprev->pnext = NULL;
 
 
             /* Conenct the Longer Branch in Memory. */
-            BOOST_FOREACH(CBlockIndex* pindex, vConnect)
+            for(auto pindex : vConnect)
                 if (pindex->pprev)
                     pindex->pprev->pnext = pindex;
 
 
-            BOOST_FOREACH(CTransaction& tx, vResurrect)
+            for(auto tx : vResurrect)
                 tx.AcceptToMemoryPool(indexdb, false);
                 
 
-            BOOST_FOREACH(CTransaction& tx, vDelete)
+            for(auto tx : vDelete)
                 mempool.remove(tx);
                 
         }
@@ -462,7 +462,7 @@ namespace Core
                         
                 if(!vtx[nTx].IsCoinBase())
                 {
-                    BOOST_FOREACH(const CTxIn& txin, vtx[nTx].vin)
+                    for(auto txin : vtx[nTx].vin)
                     {
                         if(txin.prevout.IsNull())
                             continue;
@@ -563,8 +563,8 @@ namespace Core
                 
         }
                                                 
-        /* Add the Pending Checkpoint into the Blockchain. */
-        if(!pindexNew->pprev || IsNewTimespan(pindexNew))
+        /** Add the Pending Checkpoint into the Blockchain. **/
+        if(!pindexNew->pprev || IsNewTimespan(pindexNew->pprev))
         {
             pindexNew->PendingCheckpoint = make_pair(pindexNew->nHeight, pindexNew->GetBlockHash());
             
@@ -590,6 +590,38 @@ namespace Core
         indexdb.TxnBegin();
         indexdb.WriteBlockIndex(CDiskBlockIndex(pindexNew));
 
+        if(!indexdb.WriteBlockIndex(CDiskBlockIndex(pindexNew)))
+        {
+            indexdb.TxnAbort();
+            return error("CBlock::AddToBlockIndex() : Failed to Write Block Index");
+        }
+        
+        bool fValid = true;
+        if(!IsInitialBlockDownload() && GetBoolArg("-softban", true) && IsProofOfStake() && !cTrustPool.IsValid(*this))
+        {
+            printf("\x1b[31m SOFTBAN: Not Connecting %s\x1b[0m \n", hash.ToString().substr(0, 20).c_str());
+                    
+            fValid = false;
+        }
+        
+
+        /** Set the Best chain if Highest Trust. **/
+        if (fValid && pindexNew->nChainTrust > nBestChainTrust)
+        {
+            /** Check that Block is Descendant of Hardened Checkpoints. **/
+            if(pindexPrev && !IsDescendant(pindexNew->pprev))
+            {
+                indexdb.TxnAbort();
+                return error("CBlock::AddToBlockIndex() : Not a descendant of Last Checkpoint");
+            }
+        
+            if (!SetBestChain(indexdb, pindexNew))
+            {
+                indexdb.TxnAbort();
+                return false;
+            }
+        }
+
         /* Set the Best chain if Highest Trust. */
         if (pindexNew->nChainTrust > nBestChainTrust)
             if (!SetBestChain(indexdb, pindexNew))
@@ -599,7 +631,7 @@ namespace Core
         if(!indexdb.TxnCommit())
             return error("CBlock::AddToBlockIndex() : Failed to Commit Transaction to the Database.");
         
-        if (pindexNew == pindexBest)
+        if (fValid && pindexNew == pindexBest)
         {
             /* Relay the Block to Nexus Network. */
             if (!IsInitialBlockDownload())
@@ -868,6 +900,18 @@ namespace Core
             int64 nMiningReward = 0;
             for(int nIndex = 0; nIndex < nSize - 2; nIndex++)
                 nMiningReward += vtx[0].vout[nIndex].nValue;
+            
+            /* Soft Check on Floating Point Precision (logging only) */
+            if(GetBoolArg("-logerrors", false)) {
+                if(nMiningReward != GetCoinbaseReward(pindexPrev, GetChannel(), 0))
+                    error("AcceptBlock() : miner reward mismatch %" PRId64 " : %" PRId64 "", nMiningReward, GetCoinbaseReward(pindexPrev, GetChannel(), 0));
+                
+                if(vtx[0].vout[nSize - 2].nValue != GetCoinbaseReward(pindexPrev, GetChannel(), 1))
+                    error("AcceptBlock() : ambassador reward mismatch %" PRId64 " : %" PRId64 "", vtx[0].vout[nSize - 2].nValue, GetCoinbaseReward(pindexPrev, GetChannel(), 0));
+                
+                if(vtx[0].vout[nSize - 1].nValue != GetCoinbaseReward(pindexPrev, GetChannel(), 2))
+                    error("AcceptBlock() : developer reward mismatch %" PRId64 " : %" PRId64 "", vtx[0].vout[nSize - 1].nValue, GetCoinbaseReward(pindexPrev, GetChannel(), 0));
+            }
                     
             /* Check that the Mining Reward Matches the Coinbase Calculations. */
             if (round_coin_digits(nMiningReward, 3) != round_coin_digits(GetCoinbaseReward(pindexPrev, GetChannel(), 0), 3))
@@ -875,7 +919,7 @@ namespace Core
                     
             /* Check that the Exchange Reward Matches the Coinbase Calculations. */
             if (round_coin_digits(vtx[0].vout[nSize - 2].nValue, 3) != round_coin_digits(GetCoinbaseReward(pindexPrev, GetChannel(), 1), 3))
-                return error("AcceptBlock() : exchange reward mismatch %" PRId64 " : %" PRId64 "", round_coin_digits(vtx[0].vout[nSize - 2].nValue, 3), round_coin_digits(GetCoinbaseReward(pindexPrev, GetChannel(), 1), 3));
+                return error("AcceptBlock() : ambassador reward mismatch %" PRId64 " : %" PRId64 "\n", round_coin_digits(vtx[0].vout[nSize - 2].nValue, 3), round_coin_digits(GetCoinbaseReward(pindexPrev, GetChannel(), 1), 3));
                         
             /* Check that the Developer Reward Matches the Coinbase Calculations. */
             if (round_coin_digits(vtx[0].vout[nSize - 1].nValue, 3) != round_coin_digits(GetCoinbaseReward(pindexPrev, GetChannel(), 2), 3))
@@ -885,14 +929,8 @@ namespace Core
         
         /** Check the Proof of Stake Claims. **/
         else if (IsProofOfStake())
-        {
-            if(!cTrustPool.Check(*this))
-                return DoS(50, error("AcceptBlock() : Invalid Trust Key"));
-            
             if(!cTrustPool.Accept(*this))
                 return DoS(50, error("AcceptBlock() : Unable to Accept Trust Key"));
-            
-        }
         
             
         /** Check that Transactions are Finalized. **/
@@ -1108,12 +1146,11 @@ namespace Core
             fTestNet? "Test" : "Nexus", hashGenesisBlock.ToString().substr(0, 20).c_str(), bnProofOfWorkLimit[0].GetCompact(), bnProofOfWorkStart[0].GetCompact(), nCoinbaseMaturity);
 
         /** Initialize Block Index Database. **/
-        LLD::CIndexDB indexdb("cr");
+        LLD::CIndexDB indexdb("r+");
         if (!indexdb.LoadBlockIndex() || mapBlockIndex.empty())
         {
             if (!fAllowNew)
                 return false;
-
 
             const char* pszTimestamp = "Silver Doctors [2-19-2014] BANKER CLEAN-UP: WE ARE AT THE PRECIPICE OF SOMETHING BIG";
             CTransaction txNew;

@@ -360,8 +360,8 @@ namespace Net
 		for(std::map<uint576, Core::CTrustKey>::iterator it = Core::cTrustPool.mapTrustKeys.begin(); it != Core::cTrustPool.mapTrustKeys.end(); ++it)
 		{
 			Object obj;
-			
-            if(it->second.Expired(0, Core::pindexBest->pprev->GetBlockHash()))
+
+			if(it->second.Expired(0, Core::pindexBest->GetBlockHash()))
 				continue;
 				
 			/** Check the Wallet and Trust Keys in Trust Pool to see if we own any keys. **/
@@ -379,7 +379,6 @@ namespace Net
 		
 		ret.push_back(Pair("keys", trustkeys));
 		ret.push_back(Pair("total active", (int) nTotalActive));
-		ret.push_back(Pair("total expired", (int) (Core::cTrustPool.mapTrustKeys.size() - nTotalActive)));
 		
 		return ret;
 	}
@@ -2521,7 +2520,7 @@ namespace Net
 			Wallet::NexusAddress address;
 			address.SetPubKey(i->second.vchPubKey);
 			if(pwalletMain->HaveKey(address))
-                result.push_back(Pair(address.ToString(), i->second.Expired(0, Core::pindexBest->pprev->GetBlockHash()) ? "TRUE" : "FALSE"));
+				result.push_back(Pair(address.ToString(), i->second.Expired(0, Core::pindexBest->GetBlockHash()) ? "TRUE" : "FALSE"));
 			
 		}
 

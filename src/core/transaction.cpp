@@ -114,10 +114,13 @@ namespace Core
 	bool CTransaction::ReadFromDisk(LLD::CIndexDB& indexdb, COutPoint prevout, CTxIndex& txindexRet)
 	{
 		SetNull();
+        
 		if (!indexdb.ReadTxIndex(prevout.hash, txindexRet))
 			return false;
+        
 		if (!ReadFromDisk(txindexRet.pos))
 			return false;
+        
 		if (prevout.n >= vout.size())
 		{
 			SetNull();
@@ -500,6 +503,7 @@ namespace Core
 			EraseFromWallets(ptxOld->GetHash());
 
 		printf("CTxMemPool::accept() : accepted %s\n", hash.ToString().substr(0,10).c_str());
+        
 		return true;
 	}
 

@@ -671,7 +671,6 @@ namespace Core
                 if(hashThisBlock != 0){
                     if((*prev).first == hashThisBlock){
                         fFound = true;
-                        
                         continue;
                     }
                     
@@ -690,7 +689,7 @@ namespace Core
 		bool Expired(uint1024 hashThisBlock, uint1024 hashPrevBlock) const;
 		bool CheckGenesis(CBlock cBlock) const;
 		
-		std::string ToString()
+		std::string ToString() const
 		{
 			uint576 cKey;
 			cKey.SetBytes(vchPubKey);

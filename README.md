@@ -15,7 +15,7 @@ that rides on the backbones of the network and provides a stable storage and tra
 of value from party to party. 
 
 Nexus is a connection between two or more things, with this following code being a set of
-tools to facilitate this connection between individuals. 
+tools to facilitate this connection between individuals.
 
 Why Nexus?
 ----------
